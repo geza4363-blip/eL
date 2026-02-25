@@ -1,0 +1,136 @@
+-- FEEDER DENGAN AUTO JOIN (PAKAI FILTER LENGKAP)
+loadstring([[
+-- Services
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+-- Remotes
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not remotes then return end
+local SubmitWord = remotes:FindFirstChild("SubmitWord")
+local BillboardUpdate = remotes:FindFirstChild("BillboardUpdate")
+local TypeSound = remotes:FindFirstChild("TypeSound")
+local MatchUI = remotes:FindFirstChild("MatchUI")
+local BillboardEnd = remotes:FindFirstChild("BillboardEnd")
+
+-- State
+local matchActive = false
+local isMyTurn = false
+local spamActive = false
+
+-- =========================================================
+-- AUTO JOIN (COPY PASTE DARI SCRIPT LAMA)
+-- =========================================================
+local function findJoinPrompt()
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            local promptText = (obj.ObjectText or ""):lower()
+            local actionText = (obj.ActionText or ""):lower()
+            
+            -- Filter kata kunci
+            if promptText:find("join") or promptText:find("gabung") or 
+               promptText:find("main") or promptText:find("meja") or
+               actionText:find("join") or actionText:find("gabung") or
+               actionText:find("main") or actionText:find("meja") then
+                return obj
+            end
+            
+            -- Cek parent
+            if obj.Parent then
+                local parentName = obj.Parent.Name:lower()
+                if parentName:find("meja") or parentName:find("table") or parentName:find("kursi") then
+                    return obj
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function autoJoin()
+    local prompt = findJoinPrompt()
+    if prompt then
+        pcall(function()
+            prompt.PromptTriggered:Fire(LocalPlayer)
+            prompt.Triggered:Fire(LocalPlayer)
+        end)
+        print("✅ Join clicked")
+        return true
+    end
+    return false
+end
+
+-- LOOP AUTO JOIN CEPAT
+spawn(function()
+    while true do
+        if not matchActive then
+            autoJoin()
+        end
+        wait(0.5) -- Setengah detik aja cukup
+    end
+end)
+
+-- =========================================================
+-- SPAM XXX CEPAT
+-- =========================================================
+local function spamXxx()
+    if not isMyTurn or matchActive == false or spamActive then return end
+    
+    spamActive = true
+    local word = "xxx"
+    
+    for spam = 1, 5 do
+        if not isMyTurn then break end
+        
+        -- Ketik cepat
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("x") end)
+        wait(0.03)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xx") end)
+        wait(0.03)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xxx") end)
+        wait(0.03)
+        
+        -- Submit
+        pcall(function() SubmitWord:FireServer(word) end)
+        print("📤 Spam #" .. spam)
+        
+        if spam < 5 then wait(0.1) end
+    end
+    
+    spamActive = false
+    if BillboardEnd then pcall(function() BillboardEnd:FireServer() end) end
+end
+
+-- =========================================================
+-- MATCH HANDLER
+-- =========================================================
+if MatchUI then
+    MatchUI.OnClientEvent:Connect(function(cmd)
+        if cmd == "ShowMatchUI" then
+            matchActive = true
+            isMyTurn = false
+        elseif cmd == "HideMatchUI" then
+            matchActive = false
+            isMyTurn = false
+            spamActive = false
+        elseif cmd == "StartTurn" then
+            isMyTurn = true
+            wait(0.3)
+            spamXxx()
+        elseif cmd == "EndTurn" then
+            isMyTurn = false
+            spamActive = false
+        end
+    end)
+end
+
+print("✅ FEEDER READY - Auto join aktif")
+]])
