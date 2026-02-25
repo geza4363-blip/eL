@@ -1,0 +1,164 @@
+-- FEEDER AUTO - PROXIMITY PROMPT TERDEKAT
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+-- Remote
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not remotes then return end
+
+local SubmitWord = remotes:FindFirstChild("SubmitWord")
+local BillboardUpdate = remotes:FindFirstChild("BillboardUpdate")
+local TypeSound = remotes:FindFirstChild("TypeSound")
+local MatchUI = remotes:FindFirstChild("MatchUI")
+local BillboardEnd = remotes:FindFirstChild("BillboardEnd")
+
+-- State
+local matchActive = false
+local isMyTurn = false
+
+-- =========================================================
+-- CARI PROXIMITY PROMPT TERDEKAT
+-- =========================================================
+local function getNearestPrompt()
+    local character = LocalPlayer.Character
+    if not character then return nil end
+    
+    local root = character:FindFirstChild("HumanoidRootPart")
+    if not root then return nil end
+    
+    local nearestPrompt = nil
+    local nearestDistance = math.huge
+    
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
+            local parent = obj.Parent
+            if parent then
+                local distance = (parent.Position - root.Position).Magnitude
+                if distance < nearestDistance then
+                    nearestPrompt = obj
+                    nearestDistance = distance
+                end
+            end
+        end
+    end
+    
+    return nearestPrompt, nearestDistance
+end
+
+-- =========================================================
+-- TRIGGER PROMPT TERDEKAT
+-- =========================================================
+local function triggerNearestPrompt()
+    local prompt, distance = getNearestPrompt()
+    
+    if prompt then
+        pcall(function() prompt.PromptTriggered:Fire(LocalPlayer) end)
+        pcall(function() prompt.Triggered:Fire(LocalPlayer) end)
+        print(string.format("✅ Trigger prompt terdekat (%.1f studs)", distance))
+        return true
+    end
+    
+    print("❌ Tidak ada proximity prompt di dekat sini")
+    return false
+end
+
+-- LOOP AUTO JOIN (SETIAP 1 DETIK)
+spawn(function()
+    while wait(1) do
+        if not matchActive then
+            triggerNearestPrompt()
+        end
+    end
+end)
+
+-- =========================================================
+-- SPAM 5X
+-- =========================================================
+local function spamXxx()
+    if not isMyTurn then return end
+    
+    for i = 1, 5 do
+        if not isMyTurn then break end
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("x") end)
+        wait(0.05)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xx") end)
+        wait(0.05)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xxx") end)
+        wait(0.05)
+        
+        pcall(function() SubmitWord:FireServer("xxx") end)
+        print("✅ Spam #" .. i)
+        
+        if i < 5 then wait(0.1) end
+    end
+    
+    if BillboardEnd then
+        pcall(function() BillboardEnd:FireServer() end)
+    end
+end
+
+-- =========================================================
+-- MATCH HANDLER
+-- =========================================================
+if MatchUI then
+    MatchUI.OnClientEvent:Connect(function(cmd)
+        if cmd == "ShowMatchUI" then
+            matchActive = true
+            isMyTurn = false
+            print("🎮 Match dimulai")
+        elseif cmd == "HideMatchUI" then
+            matchActive = false
+            isMyTurn = false
+            print("🎮 Match selesai")
+        elseif cmd == "StartTurn" then
+            isMyTurn = true
+            wait(0.3)
+            spamXxx()
+        elseif cmd == "EndTurn" then
+            isMyTurn = false
+        end
+    end)
+end
+
+-- =========================================================
+-- GUI SIMPLE (Tombol JOIN di layar)
+-- =========================================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "FeederGUI"
+gui.ResetOnSpawn = false
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local btn = Instance.new("TextButton")
+btn.Size = UDim2.new(0, 100, 0, 40)
+btn.Position = UDim2.new(0, 10, 0.5, -20)
+btn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+btn.Text = "JOIN"
+btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 14
+btn.Draggable = true
+btn.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 8)
+corner.Parent = btn
+
+btn.MouseButton1Click:Connect(function()
+    btn.Text = "..."
+    triggerNearestPrompt()
+    wait(0.5)
+    btn.Text = "JOIN"
+end)
+
+print("=================================")
+print("✅ FEEDER READY - Prompt terdekat")
+print("=================================")
