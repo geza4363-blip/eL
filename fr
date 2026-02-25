@@ -1,0 +1,245 @@
+-- =========================================================
+-- FEEDER AUTO - SPAM CEPAT + AUTO JOIN INSTAN
+-- =========================================================
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+
+-- =========================================================
+-- REMOTES
+-- =========================================================
+local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+if not remotes then 
+    warn("❌ Remotes tidak ditemukan")
+    return 
+end
+
+local SubmitWord = remotes:FindFirstChild("SubmitWord")
+local BillboardUpdate = remotes:FindFirstChild("BillboardUpdate")
+local TypeSound = remotes:FindFirstChild("TypeSound")
+local MatchUI = remotes:FindFirstChild("MatchUI")
+local BillboardEnd = remotes:FindFirstChild("BillboardEnd")
+
+-- =========================================================
+-- STATE
+-- =========================================================
+local matchActive = false
+local isMyTurn = false
+local autoJoinEnabled = true
+local feedEnabled = true
+local spamActive = false
+local spamCount = 0
+
+-- =========================================================
+-- AUTO JOIN INSTAN (LOOP CEPAT)
+-- =========================================================
+local function autoJoin()
+    if not autoJoinEnabled then return false end
+    if matchActive then return false end
+    
+    local character = LocalPlayer.Character
+    if not character then return false end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return false end
+    
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") and obj.Enabled then
+            local parent = obj.Parent
+            if parent then
+                local distance = (parent.Position - humanoidRootPart.Position).Magnitude
+                if distance < 50 then
+                    pcall(function()
+                        fireproximityprompt(obj)
+                    end)
+                    print("✅ Join dicoba")
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
+-- LOOP AUTO JOIN CEPAT (TANPA JEDA)
+task.spawn(function()
+    while true do
+        if autoJoinEnabled and not matchActive then
+            autoJoin()
+        end
+        task.wait() -- 1 frame ≈ 0.03 detik
+    end
+end)
+
+-- =========================================================
+-- SPAM CEPAT + AUTO STOP
+-- =========================================================
+local function spamCepat()
+    if not isMyTurn or not matchActive or not feedEnabled or spamActive then 
+        return 
+    end
+    
+    spamActive = true
+    local word = "xxx"
+    local spamKe = 0
+    
+    print("🚀 Spam cepat dimulai")
+    
+    while spamKe < 5 and isMyTurn and matchActive and feedEnabled do
+        spamKe = spamKe + 1
+        
+        -- KETIK CEPAT
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("x") end)
+        task.wait(0.02)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xx") end)
+        task.wait(0.02)
+        
+        pcall(function() TypeSound:FireServer() end)
+        pcall(function() BillboardUpdate:FireServer("xxx") end)
+        task.wait(0.02)
+        
+        -- SUBMIT
+        pcall(function() SubmitWord:FireServer(word) end)
+        spamCount = spamCount + 1
+        print("📤 Spam #" .. spamKe)
+        
+        if isMyTurn and spamKe < 5 then
+            task.wait(0.1)
+        end
+    end
+    
+    spamActive = false
+    
+    if spamKe >= 5 then
+        print("✅ Spam 5x selesai")
+    else
+        print("⏹️ Spam berhenti (giliran berganti)")
+    end
+    
+    if BillboardEnd then
+        pcall(function() BillboardEnd:FireServer() end)
+    end
+end
+
+-- =========================================================
+-- GUI MINIMALIS
+-- =========================================================
+local gui = Instance.new("ScreenGui")
+gui.Name = "FeederGUI"
+gui.ResetOnSpawn = false
+gui.DisplayOrder = 999
+gui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
+local frame = Instance.new("Frame")
+frame.Size = UDim2.fromOffset(180, 160)
+frame.Position = UDim2.new(0.5, -90, 0, 10)
+frame.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
+frame.BorderSizePixel = 0
+frame.Active = true
+frame.Parent = gui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = frame
+
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, 0, 0, 30)
+title.BackgroundTransparency = 1
+title.Text = "🍼 FEEDER"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Font = Enum.Font.GothamBold
+title.TextSize = 14
+title.Parent = frame
+
+local status = Instance.new("TextLabel")
+status.Size = UDim2.new(1, -10, 0, 40)
+status.Position = UDim2.fromOffset(5, 30)
+status.BackgroundTransparency = 1
+status.Text = "Mencari match..."
+status.TextColor3 = Color3.fromRGB(200, 200, 200)
+status.Font = Enum.Font.Gotham
+status.TextSize = 11
+status.TextWrapped = true
+status.Parent = frame
+
+local autoBtn = Instance.new("TextButton")
+autoBtn.Size = UDim2.new(0.9, 0, 0, 30)
+autoBtn.Position = UDim2.new(0.05, 0, 0, 75)
+autoBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 50)
+autoBtn.Text = "Auto Join: ON"
+autoBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+autoBtn.Font = Enum.Font.GothamBold
+autoBtn.TextSize = 11
+autoBtn.Parent = frame
+
+local btnCorner = Instance.new("UICorner")
+btnCorner.CornerRadius = UDim.new(0, 5)
+btnCorner.Parent = autoBtn
+
+local joinBtn = Instance.new("TextButton")
+joinBtn.Size = UDim2.new(0.9, 0, 0, 25)
+joinBtn.Position = UDim2.new(0.05, 0, 0, 115)
+joinBtn.BackgroundColor3 = Color3.fromRGB(100, 100, 255)
+joinBtn.Text = "Join Manual"
+joinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+joinBtn.Font = Enum.Font.GothamBold
+joinBtn.TextSize = 10
+joinBtn.Parent = frame
+
+local joinCorner = Instance.new("UICorner")
+joinCorner.CornerRadius = UDim.new(0, 5)
+joinCorner.Parent = joinBtn
+
+-- Button events
+autoBtn.MouseButton1Click:Connect(function()
+    autoJoinEnabled = not autoJoinEnabled
+    autoBtn.Text = autoJoinEnabled and "Auto Join: ON" or "Auto Join: OFF"
+    autoBtn.BackgroundColor3 = autoJoinEnabled and Color3.fromRGB(50, 150, 50) or Color3.fromRGB(150, 50, 50)
+end)
+
+joinBtn.MouseButton1Click:Connect(autoJoin)
+
+-- =========================================================
+-- MATCH EVENTS
+-- =========================================================
+if MatchUI then
+    MatchUI.OnClientEvent:Connect(function(cmd)
+        if cmd == "ShowMatchUI" then
+            matchActive = true
+            isMyTurn = false
+            spamActive = false
+            status.Text = "✅ DALAM MATCH\nSpam: " .. spamCount .. "x"
+            
+        elseif cmd == "HideMatchUI" then
+            matchActive = false
+            isMyTurn = false
+            spamActive = false
+            spamCount = 0
+            status.Text = "🔍 Mencari match..."
+            
+        elseif cmd == "StartTurn" then
+            isMyTurn = true
+            status.Text = "⚡ SPAM CEPAT!\nSpam: " .. spamCount .. "x"
+            task.wait(0.2)
+            spamCepat()
+            
+        elseif cmd == "EndTurn" then
+            isMyTurn = false
+            spamActive = false
+            status.Text = "⏳ Giliran lawan\nSpam: " .. spamCount .. "x"
+        end
+    end)
+end
+
+print("=================================")
+print("🍼 FEEDER INSTAN JOIN")
+print("=================================")
+print("✅ Auto join: SETIAP FRAME")
+print("✅ Spam cepat + auto stop")
+print("=================================")
