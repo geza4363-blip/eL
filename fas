@@ -1,0 +1,514 @@
+-- =========================================================
+-- WIN TRADING - AUTO REJOIN DENGAN PROXIMITY PROMPT
+-- =========================================================
+
+-- Load Rayfield
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local ProximityPromptService = game:GetService("ProximityPromptService")
+local Workspace = game:GetService("Workspace")
+
+-- =========================================================
+-- REMOTE
+-- =========================================================
+local SubmitWord = ReplicatedStorage.Remotes.SubmitWord
+local BillboardUpdate = ReplicatedStorage.Remotes.BillboardUpdate
+local TypeSound = ReplicatedStorage.Remotes.TypeSound
+local UsedWordWarn = ReplicatedStorage.Remotes.UsedWordWarn
+local MatchUI = ReplicatedStorage.Remotes.MatchUI
+local BillboardEnd = ReplicatedStorage.Remotes.BillboardEnd
+
+-- =========================================================
+-- WORDLIST A-Z (2 KATA PER HURUF)
+-- =========================================================
+local kataModule = {
+    "aku", "air", "buku", "batu", "cinta", "cepat", "dunia", "dua",
+    "enak", "esok", "fakta", "foto", "gajah", "gunung", "hari", "hujan",
+    "ikan", "indah", "jalan", "jauh", "kamu", "kecil", "laut", "lari",
+    "makan", "minum", "nasi", "naik", "orang", "obat", "pintar", "pensil",
+    "quran", "quotes", "rumah", "rusak", "saya", "senang", "teman", "tinggi",
+    "ular", "udara", "virus", "vokal", "waktu", "warna", "xenon", "xylol",
+    "yakin", "yatim", "zebra", "zakat"
+}
+
+-- =========================================================
+-- STATE
+-- =========================================================
+local State = {
+    matchActive = false,
+    isMyTurn = false,
+    serverLetter = "",
+    myRole = "main",
+    autoPlay = false,
+    autoRunning = false,
+    farmActive = false,
+    usedWords = {},
+    matchCount = 0,
+    kataCount = 0
+}
+
+-- =========================================================
+-- FUNGSI DETEKSI DAN TRIGGER PROXIMITY PROMPT
+-- =========================================================
+
+-- Cari semua Proximity Prompt di sekitar
+local function findProximityPrompts()
+    local prompts = {}
+    
+    -- Cari di Workspace
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            -- Cek apakah prompt ini untuk join match (biasanya di meja)
+            local promptText = (obj.ObjectText or ""):lower()
+            local actionText = (obj.ActionText or ""):lower()
+            
+            -- Log untuk debugging
+            print("🔍 Ditemukan ProximityPrompt:")
+            print("   - Parent:", obj.Parent and obj.Parent.Name or "?")
+            print("   - ActionText:", obj.ActionText)
+            print("   - ObjectText:", obj.ObjectText)
+            print("   - HoldDuration:", obj.HoldDuration)
+            print("   - Key:", obj.KeyboardKeyCode and obj.KeyboardKeyCode.Name or "E")
+            
+            -- Cek apakah ini prompt join (berdasarkan teks atau lokasi)
+            local isJoinPrompt = false
+            
+            -- Cek teks
+            if promptText:find("join") or promptText:find("gabung") or 
+               promptText:find("main") or promptText:find("meja") or
+               actionText:find("join") or actionText:find("gabung") or
+               actionText:find("main") or actionText:find("meja") then
+                isJoinPrompt = true
+            end
+            
+            -- Cek parent name (kalau ada "meja" atau "table")
+            if obj.Parent then
+                local parentName = obj.Parent.Name:lower()
+                if parentName:find("meja") or parentName:find("table") or parentName:find("kursi") then
+                    isJoinPrompt = true
+                end
+            end
+            
+            if isJoinPrompt then
+                table.insert(prompts, obj)
+            end
+        end
+    end
+    
+    return prompts
+end
+
+-- Fungsi untuk trigger Proximity Prompt (simulasi tekan E)
+local function triggerProximityPrompt(prompt)
+    if not prompt then return false end
+    
+    print("✅ Menekan Proximity Prompt: " .. (prompt.ObjectText or "Join"))
+    
+    -- METHOD 1: Fire PromptTriggered (paling ampuh)
+    pcall(function()
+        prompt.PromptTriggered:Fire(LocalPlayer)
+    end)
+    
+    -- METHOD 2: Panggil event triggered langsung
+    pcall(function()
+        prompt.Triggered:Fire(LocalPlayer)
+    end)
+    
+    -- METHOD 3: Simulasi input keyboard (untuk PC)
+    pcall(function()
+        local keyCode = prompt.KeyboardKeyCode or Enum.KeyCode.E
+        local vim = game:GetService("VirtualInputManager")
+        vim:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.05)
+        vim:SendKeyEvent(false, keyCode, false, game)
+    end)
+    
+    -- METHOD 4: Untuk Android, set HoldDuration 0 biar langsung trigger
+    pcall(function()
+        if prompt.HoldDuration > 0 then
+            prompt.HoldDuration = 0
+        end
+    end)
+    
+    return true
+end
+
+-- Fungsi auto join dengan Proximity Prompt
+local function autoJoinWithProximity()
+    print("🔄 Auto Join: Mencari Proximity Prompt...")
+    
+    local prompts = findProximityPrompts()
+    
+    if #prompts == 0 then
+        print("❌ Tidak ada Proximity Prompt ditemukan")
+        return false
+    end
+    
+    print("✅ Ditemukan " .. #prompts .. " Proximity Prompt")
+    
+    -- Trigger semua prompt yang ditemukan (untuk jaga-jaga)
+    for _, prompt in ipairs(prompts) do
+        triggerProximityPrompt(prompt)
+        task.wait(0.2)
+    end
+    
+    return true
+end
+
+-- =========================================================
+-- FUNGSI MAIN/FEEDER (SAMA SEPERTI SEBELUMNYA)
+-- =========================================================
+local function getWordsStartingWith(prefix)
+    if not prefix or prefix == "" then return {} end
+    
+    local prefixLower = string.lower(prefix)
+    local results = {}
+    
+    for _, word in ipairs(kataModule) do
+        local w = tostring(word)
+        if w and #w > 0 then
+            local wLower = string.lower(w)
+            if string.sub(wLower, 1, #prefixLower) == prefixLower then
+                if not State.usedWords[wLower] then
+                    table.insert(results, w)
+                end
+            end
+        end
+    end
+    
+    table.sort(results, function(a, b) return #a > #b end)
+    return results
+end
+
+local function playAsMain()
+    if not State.matchActive or not State.isMyTurn then return end
+    if not State.serverLetter or State.serverLetter == "" then return end
+    if State.autoRunning then return end
+    
+    State.autoRunning = true
+    
+    task.spawn(function()
+        local words = getWordsStartingWith(State.serverLetter)
+        
+        if #words == 0 then
+            State.autoRunning = false
+            return
+        end
+        
+        local selectedWord = words[1]
+        print("🏆 MAIN (" .. State.kataCount + 1 .. ") - Ngetik: " .. selectedWord)
+        
+        local currentWord = State.serverLetter
+        local remain = selectedWord:sub(#State.serverLetter + 1)
+        
+        for i = 1, #remain do
+            if not State.matchActive or not State.isMyTurn then
+                State.autoRunning = false
+                return
+            end
+            
+            currentWord = currentWord .. remain:sub(i, i)
+            
+            pcall(function()
+                TypeSound:FireServer()
+                BillboardUpdate:FireServer(currentWord)
+            end)
+            
+            task.wait(math.random(20, 40) / 1000)
+        end
+        
+        task.wait(0.05)
+        
+        pcall(function()
+            SubmitWord:FireServer(selectedWord)
+        end)
+        
+        print("✅ MAIN - Submit: " .. selectedWord)
+        State.usedWords[string.lower(selectedWord)] = true
+        State.kataCount = State.kataCount + 1
+        State.autoRunning = false
+    end)
+end
+
+local function playAsFeeder()
+    if not State.matchActive or not State.isMyTurn then return end
+    if not State.serverLetter or State.serverLetter == "" then return end
+    if State.autoRunning then return end
+    
+    State.autoRunning = true
+    
+    task.spawn(function()
+        local wrongWord = "xxx"
+        
+        print("🍼 FEEDER (" .. State.kataCount + 1 .. ") - Ngetik: " .. wrongWord)
+        
+        local currentWord = ""
+        for i = 1, #wrongWord do
+            currentWord = currentWord .. wrongWord:sub(i, i)
+            
+            pcall(function()
+                TypeSound:FireServer()
+                BillboardUpdate:FireServer(currentWord)
+            end)
+            
+            task.wait(math.random(15, 30) / 1000)
+        end
+        
+        task.wait(0.05)
+        
+        pcall(function()
+            SubmitWord:FireServer(wrongWord)
+        end)
+        
+        print("✅ FEEDER - Submit: " .. wrongWord)
+        State.kataCount = State.kataCount + 1
+        State.autoRunning = false
+    end)
+end
+
+-- =========================================================
+-- AUTO FARM
+-- =========================================================
+local function startFarming()
+    if State.farmActive then return end
+    State.farmActive = true
+    
+    task.spawn(function()
+        while State.farmActive do
+            if not State.matchActive then
+                print("📌 Auto Farm: Mencari match dengan Proximity Prompt...")
+                autoJoinWithProximity()
+            end
+            
+            if State.matchActive then
+                State.matchCount = State.matchCount + 1
+                State.kataCount = 0
+                print("🎮 Match #" .. State.matchCount .. " dimulai")
+            end
+            
+            for i = 1, 3 do
+                if not State.farmActive then break end
+                task.wait(1)
+            end
+        end
+    end)
+end
+
+-- =========================================================
+-- UI
+-- =========================================================
+local Window = Rayfield:CreateWindow({
+    Name = "⚡ WIN TRADING - PROXIMITY PROMPT",
+    LoadingTitle = "Auto Join dengan E",
+    LoadingSubtitle = "Main vs Feeder",
+    ConfigurationSaving = { Enabled = false }
+})
+
+local MainTab = Window:CreateTab("Win Trading", 4483345998)
+
+-- Pilih Role
+MainTab:CreateDropdown({
+    Name = "Role Akun Ini",
+    Options = {"🏆 MAIN (Menang)", "🍼 FEEDER (Kalah)"},
+    CurrentOption = "🏆 MAIN (Menang)",
+    Callback = function(opt)
+        State.myRole = opt == "🏆 MAIN (Menang)" and "main" or "feeder"
+    end
+})
+
+-- Toggle Auto Play
+MainTab:CreateToggle({
+    Name = "▶️ Auto Play",
+    CurrentValue = false,
+    Callback = function(value)
+        State.autoPlay = value
+    end
+})
+
+-- Toggle Auto Farm
+MainTab:CreateToggle({
+    Name = "🔄 Auto Farm (Auto Join dengan Proximity)",
+    CurrentValue = false,
+    Callback = function(value)
+        if value then
+            State.farmActive = true
+            startFarming()
+        else
+            State.farmActive = false
+        end
+    end
+})
+
+-- Tombol Manual
+MainTab:CreateButton({
+    Name = "🔍 SCAN PROXIMITY PROMPT",
+    Callback = function()
+        local prompts = findProximityPrompts()
+        Rayfield:Notify({
+            Title = "Hasil Scan",
+            Content = "Ditemukan " .. #prompts .. " Proximity Prompt",
+            Duration = 3
+        })
+    end
+})
+
+MainTab:CreateButton({
+    Name = "🖐️ TRIGGER PROXIMITY",
+    Callback = autoJoinWithProximity
+})
+
+-- Status
+local statusLabel = MainTab:CreateParagraph({
+    Title = "Status",
+    Content = "Loading..."
+})
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if statusLabel then
+            local status = string.format(
+                "%s Role: %s\n" ..
+                "🎮 Match: %s | Turn: %s\n" ..
+                "🔤 Huruf: %s\n" ..
+                "📊 Kata: %d/2 | Match: %d\n" ..
+                "▶️ Auto: %s | 🔄 Farm: %s",
+                State.myRole == "main" and "🏆" or "🍼",
+                State.myRole == "main" and "MAIN" or "FEEDER",
+                State.matchActive and "✅" or "❌",
+                State.isMyTurn and "👤" or "🤖",
+                State.serverLetter ~= "" and State.serverLetter or "-",
+                State.kataCount,
+                State.matchCount,
+                State.autoPlay and "✅" or "❌",
+                State.farmActive and "✅" or "❌"
+            )
+            pcall(function()
+                statusLabel:Set({Title = "Status", Content = status})
+            end)
+        end
+    end
+end)
+
+-- Info
+MainTab:CreateParagraph({
+    Title = "📋 PROXIMITY PROMPT",
+    Content = [[
+🖐️ Cara Join:
+- Script akan cari Proximity Prompt
+- Trigger otomatis (simulasi tekan E)
+- Cocok untuk meja 2 pemain
+
+🔍 Test dulu dengan:
+1. SCAN PROXIMITY PROMPT
+2. TRIGGER PROXIMITY
+    ]]
+})
+
+-- =========================================================
+-- REMOTE HANDLERS
+-- =========================================================
+if MatchUI then
+    MatchUI.OnClientEvent:Connect(function(cmd, value)
+        if cmd == "ShowMatchUI" then
+            State.matchActive = true
+            State.isMyTurn = false
+            State.usedWords = {}
+            State.kataCount = 0
+            
+        elseif cmd == "HideMatchUI" then
+            State.matchActive = false
+            State.isMyTurn = false
+            State.serverLetter = ""
+            State.autoRunning = false
+            State.matchCount = State.matchCount + 1
+            
+            -- Auto Rejoin dengan Proximity
+            if State.farmActive then
+                print("🔄 Auto Farm: Match selesai, join match baru...")
+                task.wait(1.5)
+                autoJoinWithProximity()
+            end
+            
+        elseif cmd == "StartTurn" then
+            State.isMyTurn = true
+            if State.autoPlay then
+                task.wait(0.2)
+                if State.myRole == "main" then
+                    playAsMain()
+                else
+                    playAsFeeder()
+                end
+            end
+            
+        elseif cmd == "EndTurn" then
+            State.isMyTurn = false
+            State.autoRunning = false
+            
+        elseif cmd == "UpdateServerLetter" then
+            State.serverLetter = value or ""
+        end
+    end)
+end
+
+if UsedWordWarn then
+    UsedWordWarn.OnClientEvent:Connect(function(word)
+        if word then
+            State.usedWords[string.lower(word)] = true
+        end
+    end)
+end
+
+-- =========================================================
+-- SHORTCUT
+-- =========================================================
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    
+    if input.KeyCode == Enum.KeyCode.F2 then
+        if State.myRole == "main" then
+            playAsMain()
+        else
+            playAsFeeder()
+        end
+        
+    elseif input.KeyCode == Enum.KeyCode.F3 then
+        State.autoPlay = not State.autoPlay
+        
+    elseif input.KeyCode == Enum.KeyCode.F4 then
+        State.farmActive = not State.farmActive
+        if State.farmActive then
+            startFarming()
+        end
+        
+    elseif input.KeyCode == Enum.KeyCode.F5 then
+        autoJoinWithProximity()
+    end
+end)
+
+-- =========================================================
+-- READY
+-- =========================================================
+Rayfield:Notify({
+    Title = "⚡ PROXIMITY PROMPT READY",
+    Content = "F5: Test Proximity | F4: Auto Farm",
+    Duration = 5
+})
+
+print([[
+========================================
+PROXIMITY PROMPT AUTO JOIN
+========================================
+🖐️ Cara Kerja:
+1. Scan semua ProximityPrompt di game
+2. Deteksi yang untuk join match
+3. Trigger otomatis (simulasi tekan E)
+
+🔍 Test dulu dengan tombol F5
+========================================
+]])
