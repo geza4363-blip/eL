@@ -1,0 +1,499 @@
+-- =========================================================
+-- ULTRA AUTO KATA DENGAN AUTO KOREKSI (SOUND FIX)
+-- =========================================================
+
+-- Load Rayfield
+local Rayfield = loadstring(game:HttpGet('https://sirius.menu/rayfield'))()
+
+-- Services
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+
+-- ================================
+-- DOWNLOAD WORDLIST
+-- ================================
+local function downloadWordlist()
+    local wordlist = {}
+    local success = false
+    
+    local url = "https://raw.githubusercontent.com/geovedi/indonesian-wordlist/master/00-indonesian-wordlist.lst"
+    
+    print("📥 Mendownload wordlist...")
+    
+    local ok, content = pcall(function()
+        return game:HttpGet(url)
+    end)
+    
+    if ok and content then
+        for line in string.gmatch(content, "[^\r\n]+") do
+            local word = string.gsub(string.lower(line), "%s+", "")
+            if #word >= 2 then
+                table.insert(wordlist, word)
+            end
+        end
+        success = #wordlist > 0
+        if success then
+            print("✅ Berhasil! " .. #wordlist .. " kata")
+        end
+    end
+    
+    return wordlist, success
+end
+
+-- ================================
+-- LOAD WORDLIST
+-- ================================
+local kataModule = {}
+local TotalIndoWords = 0
+
+local wordlist, downloadSuccess = downloadWordlist()
+
+if downloadSuccess then
+    kataModule = wordlist
+    TotalIndoWords = #wordlist
+else
+    print("❌ Gagal, pakai fallback")
+    kataModule = {
+        "aku", "kamu", "dia", "mereka", "kami", "kita", "anda", "saya",
+        "buku", "pensil", "kertas", "meja", "kursi", "lampu", "papan",
+        "rumah", "sekolah", "kantor", "masjid", "gereja", "pasar", "toko",
+        "makan", "minum", "tidur", "mandi", "kerja", "belajar", "baca",
+        "lari", "jalan", "duduk", "berdiri", "lihat", "dengar", "rasa",
+        "senang", "sedih", "marah", "takut", "cinta", "benci", "rindu",
+        "pintar", "bodoh", "rajin", "malas", "baik", "jahat", "ramah",
+        "cepat", "lambat", "tinggi", "rendah", "besar", "kecil", "panjang",
+        "hitam", "putih", "merah", "biru", "hijau", "kuning", "ungu",
+        "apel", "jeruk", "mangga", "pisang", "anggur", "melon", "pepaya",
+        "ayam", "ikan", "sapi", "kambing", "bebek", "burung", "kucing",
+        "mobil", "motor", "sepeda", "bus", "kereta", "pesawat", "kapal",
+        "jakarta", "bandung", "surabaya", "medan", "bali", "papua", "sumatra"
+    }
+    TotalIndoWords = #kataModule
+end
+
+-- ================================
+-- REMOTES - PAKAI WAITFORCHILD SEPERTI ASLINYA
+-- ================================
+local remotes = ReplicatedStorage:WaitForChild("Remotes")
+
+-- PAKAI WAITFORCHILD UNTUK SEMUA REMOTE (SEPERTI SCRIPT ASLI)
+local MatchUI = remotes:WaitForChild("MatchUI")
+local SubmitWord = remotes:WaitForChild("SubmitWord")
+local BillboardUpdate = remotes:WaitForChild("BillboardUpdate")
+local BillboardEnd = remotes:WaitForChild("BillboardEnd")
+local TypeSound = remotes:WaitForChild("TypeSound")  -- INI YANG ANDA MAKSUD
+local UsedWordWarn = remotes:WaitForChild("UsedWordWarn")
+
+print("✅ Semua remote ditemukan:")
+print("   - TypeSound:", TypeSound.Name)
+
+-- ================================
+-- STATE & CONFIG
+-- ================================
+local State = {
+    matchActive = false,
+    isMyTurn = false,
+    serverLetter = "",
+    usedWords = {},
+    usedWordsList = {},
+    opponentStreamWord = "",
+    autoEnabled = false,
+    autoRunning = false,
+    correctionAttempts = 0,
+    lastWord = "",
+    lastAttemptTime = 0
+}
+
+local Config = {
+    minDelay = 50,
+    maxDelay = 200,
+    minWordLength = 3,
+    maxWordLength = 20,
+    maxCorrections = 3,
+    correctionDelay = 300
+}
+
+-- ================================
+-- FUNGSI AUTO KOREKSI
+-- ================================
+local function clearCurrentTyping()
+    pcall(function()
+        BillboardUpdate:FireServer("")
+    end)
+end
+
+local function getValidWord(prefix, avoidWord)
+    if not prefix or prefix == "" then return nil end
+    
+    local prefixLower = string.lower(prefix)
+    local candidates = {}
+    local avoidLower = avoidWord and string.lower(avoidWord) or ""
+    
+    for _, word in ipairs(kataModule) do
+        local w = tostring(word)
+        if w and #w > 0 then
+            local wLower = string.lower(w)
+            if string.sub(wLower, 1, #prefixLower) == prefixLower then
+                if #w >= Config.minWordLength and #w <= Config.maxWordLength then
+                    if not State.usedWords[wLower] and wLower ~= avoidLower then
+                        table.insert(candidates, w)
+                    end
+                end
+            end
+        end
+    end
+    
+    if #candidates == 0 then return nil end
+    
+    table.sort(candidates, function(a, b)
+        return #a > #b
+    end)
+    
+    return candidates
+end
+
+-- ================================
+-- AUTO ENGINE DENGAN KOREKSI (SOUND FIX)
+-- ================================
+local function startAutoWithCorrection()
+    if State.autoRunning then return end
+    if not State.autoEnabled then return end
+    if not State.matchActive or not State.isMyTurn then return end
+    if not State.serverLetter or State.serverLetter == "" then return end
+    
+    State.autoRunning = true
+    
+    task.spawn(function()
+        local currentLetter = State.serverLetter
+        local candidates = getValidWord(currentLetter)
+        local selectedWord = candidates and candidates[1] or nil
+        local correctionCount = 0
+        local lastAttemptWord = ""
+        
+        while State.matchActive and State.isMyTurn and State.autoEnabled do
+            if not selectedWord then
+                print("❌ Tidak ada kata valid untuk: " .. currentLetter)
+                State.autoRunning = false
+                return
+            end
+            
+            print("📝 Mencoba: " .. selectedWord)
+            lastAttemptWord = selectedWord
+            
+            local currentWord = currentLetter
+            local remain = selectedWord:sub(#currentLetter + 1)
+            
+            for i = 1, #remain do
+                if not State.matchActive or not State.isMyTurn then
+                    State.autoRunning = false
+                    return
+                end
+                
+                currentWord = currentWord .. remain:sub(i, i)
+                
+                -- MAIN SOUND (PAKAI WAITFORCHILD - PASTI ADA)
+                pcall(function()
+                    TypeSound:FireServer()  -- Ini harusnya work
+                end)
+                
+                -- Update billboard
+                pcall(function()
+                    BillboardUpdate:FireServer(currentWord)
+                end)
+                
+                task.wait(math.random(Config.minDelay, Config.maxDelay) / 1000)
+            end
+            
+            task.wait(0.1)
+            
+            -- Submit kata
+            local submitSuccess = pcall(function()
+                SubmitWord:FireServer(selectedWord)
+            end)
+            
+            if submitSuccess then
+                print("✅ Submit: " .. selectedWord)
+                task.wait(0.3)
+                
+                if State.isMyTurn then
+                    print("⚠️ Kata ditolak!")
+                    State.usedWords[string.lower(selectedWord)] = true
+                    table.insert(State.usedWordsList, selectedWord)
+                    
+                    pcall(function()
+                        BillboardUpdate:FireServer("")
+                    end)
+                    
+                    task.wait(Config.correctionDelay / 1000)
+                    
+                    correctionCount = correctionCount + 1
+                    if correctionCount >= Config.maxCorrections then
+                        print("❌ Terlalu banyak koreksi")
+                        break
+                    end
+                    
+                    local newCandidates = getValidWord(currentLetter, lastAttemptWord)
+                    if newCandidates and #newCandidates > 0 then
+                        selectedWord = newCandidates[1]
+                        print("🔄 Kata baru: " .. selectedWord)
+                    else
+                        print("❌ Tidak ada alternatif")
+                        break
+                    end
+                else
+                    print("✅ Kata diterima!")
+                    State.usedWords[string.lower(selectedWord)] = true
+                    table.insert(State.usedWordsList, selectedWord)
+                    break
+                end
+            else
+                print("❌ Submit gagal")
+                break
+            end
+            
+            task.wait(0.2)
+        end
+        
+        pcall(function()
+            BillboardEnd:FireServer()
+        end)
+        
+        State.autoRunning = false
+    end)
+end
+
+-- ================================
+-- UI
+-- ================================
+local Window = Rayfield:CreateWindow({
+    Name = "Auto Kata + Koreksi (Sound Fix)",
+    LoadingTitle = "Loading...",
+    LoadingSubtitle = TotalIndoWords .. " kata",
+    ConfigurationSaving = { Enabled = true, FolderName = "AutoKataConfig" }
+})
+
+local MainTab = Window:CreateTab("Main", 4483345998)
+
+-- Toggle Auto
+MainTab:CreateToggle({
+    Name = "Aktifkan Auto (dengan koreksi)",
+    CurrentValue = false,
+    Callback = function(Value)
+        State.autoEnabled = Value
+        State.correctionAttempts = 0
+        if Value and State.matchActive and State.isMyTurn then
+            startAutoWithCorrection()
+        end
+    end
+})
+
+-- Settings Delay
+MainTab:CreateSlider({
+    Name = "Min Delay (ms)",
+    Range = {20, 300},
+    Increment = 5,
+    CurrentValue = Config.minDelay,
+    Callback = function(v) Config.minDelay = v end
+})
+
+MainTab:CreateSlider({
+    Name = "Max Delay (ms)",
+    Range = {50, 800},
+    Increment = 5,
+    CurrentValue = Config.maxDelay,
+    Callback = function(v) Config.maxDelay = math.max(Config.minDelay + 10, v) end
+})
+
+MainTab:CreateSlider({
+    Name = "Min Panjang Kata",
+    Range = {2, 10},
+    Increment = 1,
+    CurrentValue = Config.minWordLength,
+    Callback = function(v) Config.minWordLength = v end
+})
+
+MainTab:CreateSlider({
+    Name = "Max Panjang Kata",
+    Range = {3, 30},
+    Increment = 1,
+    CurrentValue = Config.maxWordLength,
+    Callback = function(v) Config.maxWordLength = v end
+})
+
+MainTab:CreateSlider({
+    Name = "Max Koreksi",
+    Range = {1, 5},
+    Increment = 1,
+    CurrentValue = Config.maxCorrections,
+    Callback = function(v) Config.maxCorrections = v end
+})
+
+MainTab:CreateSlider({
+    Name = "Delay Koreksi (ms)",
+    Range = {100, 1000},
+    Increment = 50,
+    CurrentValue = Config.correctionDelay,
+    Callback = function(v) Config.correctionDelay = v end
+})
+
+-- Tombol Test Sound (PAKAI TYPESOUND LANGSUNG)
+MainTab:CreateButton({
+    Name = "🔊 TEST SOUND",
+    Callback = function()
+        local success = pcall(function()
+            TypeSound:FireServer()
+            print("✅ Sound dikirim!")
+        end)
+        
+        if success then
+            Rayfield:Notify({
+                Title = "Sound Test",
+                Content = "Sound berhasil dikirim!",
+                Duration = 2
+            })
+        else
+            Rayfield:Notify({
+                Title = "Sound Test",
+                Content = "Gagal kirim sound",
+                Duration = 2
+            })
+        end
+    end
+})
+
+-- Status
+local statusLabel = MainTab:CreateParagraph({
+    Title = "Status",
+    Content = "Wordlist: " .. TotalIndoWords .. " kata\nReady..."
+})
+
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if statusLabel then
+            local status = string.format(
+                "📚 Kata: %d | Match: %s\n" ..
+                "🎮 Turn: %s | Huruf: %s\n" ..
+                "⚙️ Auto: %s | Koreksi: %d\n" ..
+                "📏 Min: %d | Max: %d\n" ..
+                "🔊 Sound: %s",
+                TotalIndoWords,
+                State.matchActive and "✅" or "❌",
+                State.isMyTurn and "👤" or "🤖",
+                State.serverLetter ~= "" and State.serverLetter or "-",
+                State.autoEnabled and "✅" or "❌",
+                State.correctionAttempts,
+                Config.minWordLength,
+                Config.maxWordLength,
+                "✅ Tersedia"
+            )
+            pcall(function()
+                statusLabel:Set({Title = "Status", Content = status})
+            end)
+        end
+    end
+end)
+
+-- Tombol Clear Used Words
+MainTab:CreateButton({
+    Name = "Clear Used Words",
+    Callback = function()
+        State.usedWords = {}
+        State.usedWordsList = {}
+        Rayfield:Notify({Title = "Info", Content = "Used words cleared", Duration = 2})
+    end
+})
+
+-- Info kata
+MainTab:CreateButton({
+    Name = "Test Cari Kata",
+    Callback = function()
+        if State.serverLetter and State.serverLetter ~= "" then
+            local candidates = getValidWord(State.serverLetter)
+            if candidates and #candidates > 0 then
+                local msg = "Ditemukan " .. #candidates .. " kata\nContoh: " .. 
+                           candidates[1] .. ", " .. (candidates[2] or "") .. ", " .. (candidates[3] or "")
+                Rayfield:Notify({Title = "Hasil", Content = msg, Duration = 5})
+            else
+                Rayfield:Notify({Title = "Hasil", Content = "Tidak ada kata", Duration = 3})
+            end
+        else
+            Rayfield:Notify({Title = "Info", Content = "Tidak ada huruf awal", Duration = 2})
+        end
+    end
+})
+
+-- ================================
+-- REMOTE HANDLERS
+-- ================================
+if MatchUI then
+    MatchUI.OnClientEvent:Connect(function(cmd, value)
+        if cmd == "ShowMatchUI" then
+            State.matchActive = true
+            State.isMyTurn = false
+            State.usedWords = {}
+            State.usedWordsList = {}
+            State.correctionAttempts = 0
+            print("🎮 Match dimulai")
+            
+        elseif cmd == "HideMatchUI" then
+            State.matchActive = false
+            State.isMyTurn = false
+            State.serverLetter = ""
+            State.autoRunning = false
+            print("🎮 Match selesai")
+            
+        elseif cmd == "StartTurn" then
+            State.isMyTurn = true
+            State.correctionAttempts = 0
+            print("🎮 Giliran kamu! Huruf: " .. State.serverLetter)
+            if State.autoEnabled then
+                task.wait(0.2)
+                startAutoWithCorrection()
+            end
+            
+        elseif cmd == "EndTurn" then
+            State.isMyTurn = false
+            State.autoRunning = false
+            print("🎮 Giliran lawan")
+            
+        elseif cmd == "UpdateServerLetter" then
+            State.serverLetter = value or ""
+            print("📝 Huruf awal: " .. State.serverLetter)
+        end
+    end)
+end
+
+if UsedWordWarn then
+    UsedWordWarn.OnClientEvent:Connect(function(word)
+        if word then
+            State.usedWords[string.lower(word)] = true
+            table.insert(State.usedWordsList, word)
+            print("📌 Kata terpakai: " .. word)
+        end
+    end)
+end
+
+-- F2 Shortcut
+UserInputService.InputBegan:Connect(function(input, gp)
+    if gp then return end
+    if input.KeyCode == Enum.KeyCode.F2 then
+        State.autoEnabled = not State.autoEnabled
+        State.correctionAttempts = 0
+        Rayfield:Notify({
+            Title = "Auto Koreksi",
+            Content = State.autoEnabled and "ON (F2)" or "OFF (F2)",
+            Duration = 2
+        })
+    end
+end)
+
+-- Ready notification
+Rayfield:Notify({
+    Title = "✅ Siap!",
+    Content = TotalIndoWords .. " kata | Sound aktif | Tekan F2",
+    Duration = 5
+})
